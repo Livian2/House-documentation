@@ -119,132 +119,137 @@
     </div>
 
     <script>
-        const mapContainer = document.getElementById('map-container');
-        const modal = document.getElementById('modal');
-        const photoList = document.getElementById('photo-list');
+    const mapContainer = document.getElementById('map-container');
+    const modal = document.getElementById('modal');
+    const photoList = document.getElementById('photo-list');
+    
+    // PASTE YOUR CLOUDFLARE WORKER URL HERE
+    const WORKER_URL = 'https://foundation-api.olezwarts16.workers.dev/';
+
+    let locations = {}; // Stores marker data
+
+    // --- Load Existing Dots on Startup ---
+    async function loadData() {
+        const response = await fetch(`${WORKER_URL}/api/locations`);
+        const data = await response.json();
         
-        // State to hold our markers and their associated photos
-        let locations = [];
-
-        // --- Drag and Drop Handlers ---
-        mapContainer.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            mapContainer.classList.add('dragover');
+        data.forEach(row => {
+            if (!locations[row.marker_id]) {
+                locations[row.marker_id] = { id: row.marker_id, x: row.x, y: row.y, photos: [] };
+                renderMarker(row.marker_id, row.x, row.y);
+            }
+            locations[row.marker_id].photos.push({
+                url: row.image_url,
+                date: row.date_taken,
+                timestamp: row.timestamp
+            });
         });
+    }
 
-        mapContainer.addEventListener('dragleave', () => {
-            mapContainer.classList.remove('dragover');
-        });
+    // --- Drag and Drop Handlers ---
+    mapContainer.addEventListener('dragover', (e) => { e.preventDefault(); mapContainer.classList.add('dragover'); });
+    mapContainer.addEventListener('dragleave', () => mapContainer.classList.remove('dragover'));
+    mapContainer.addEventListener('drop', (e) => {
+        e.preventDefault();
+        mapContainer.classList.remove('dragover');
+        const file = e.dataTransfer.files[0];
+        if (!file) return;
 
-        mapContainer.addEventListener('drop', (e) => {
-            e.preventDefault();
-            mapContainer.classList.remove('dragover');
+        const rect = mapContainer.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        processFile(file, x, y, null);
+    });
 
-            const files = e.dataTransfer.files;
-            if (files.length === 0) return;
-            const file = files[0];
+    // --- Process and Upload the File ---
+    function processFile(file, x, y, existingMarkerId) {
+        EXIF.getData(file, async function() {
+            let dateStr = EXIF.getTag(this, "DateTimeOriginal");
+            let formattedDate = "Date Unknown";
+            let timestamp = Date.now();
 
-            // Calculate x/y relative to the map container
-            const rect = mapContainer.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
+            if (dateStr) {
+                const parts = dateStr.split(' ');
+                const dateParts = parts[0].split(':');
+                formattedDate = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]} at ${parts[1]}`;
+                timestamp = new Date(dateStr.replace(/:/g, "/")).getTime();
+            }
 
-            processFile(file, x, y, null);
-        });
+            // Create form data to send to Worker
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('x', x);
+            formData.append('y', y);
+            formData.append('date', formattedDate);
+            formData.append('timestamp', timestamp);
+            if (existingMarkerId) formData.append('markerId', existingMarkerId);
 
-        // --- Process the dropped file ---
-        function processFile(file, x, y, existingMarkerId) {
-            // Read file for rendering
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                const photoDataUrl = e.target.result;
+            // Change cursor to loading so you know it's working
+            document.body.style.cursor = 'wait'; 
 
-                // Extract EXIF Date
-                EXIF.getData(file, function() {
-                    let dateStr = EXIF.getTag(this, "DateTimeOriginal");
-                    
-                    // Format EXIF date (YYYY:MM:DD HH:MM:SS) to something readable
-                    let formattedDate = "Date Unknown (No Metadata)";
-                    if (dateStr) {
-                        const parts = dateStr.split(' ');
-                        const dateParts = parts[0].split(':');
-                        formattedDate = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]} at ${parts[1]}`;
+            try {
+                const response = await fetch(`${WORKER_URL}/api/upload`, { method: 'POST', body: formData });
+                const result = await response.json();
+                
+                if (result.success) {
+                    if (!existingMarkerId) {
+                        locations[result.markerId] = { id: result.markerId, x: x, y: y, photos: [] };
+                        renderMarker(result.markerId, x, y);
                     }
-
-                    const photoObj = {
-                        url: photoDataUrl,
+                    locations[result.markerId || existingMarkerId].photos.push({
+                        url: result.imageUrl,
                         date: formattedDate,
-                        timestamp: dateStr ? new Date(dateStr.replace(/:/g, "/")).getTime() : Date.now()
-                    };
+                        timestamp: timestamp
+                    });
+                    alert('Photo uploaded and saved securely!');
+                }
+            } catch (err) {
+                alert('Upload failed: ' + err);
+            } finally {
+                document.body.style.cursor = 'default';
+            }
+        });
+    }
 
-                    if (existingMarkerId !== null) {
-                        // Add to existing marker
-                        const loc = locations.find(l => l.id === existingMarkerId);
-                        loc.photos.push(photoObj);
-                        alert(`Added photo to existing location. Date: ${formattedDate}`);
-                    } else {
-                        // Create new marker
-                        createNewLocation(x, y, photoObj);
-                    }
-                });
-            };
-            reader.readAsDataURL(file);
-        }
+    // --- Draw the dot on the screen ---
+    function renderMarker(id, x, y) {
+        const marker = document.createElement('div');
+        marker.className = 'marker';
+        marker.style.left = `${x}px`;
+        marker.style.top = `${y}px`;
+        
+        marker.addEventListener('dragover', (e) => e.preventDefault());
+        marker.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const file = e.dataTransfer.files[0];
+            if(file) processFile(file, x, y, id);
+        });
 
-        // --- Create a new dot on the map ---
-        function createNewLocation(x, y, firstPhoto) {
-            const id = Date.now();
-            const newLoc = { id, x, y, photos: [firstPhoto] };
-            locations.push(newLoc);
+        marker.addEventListener('click', (e) => {
+            e.stopPropagation();
+            openModal(id);
+        });
 
-            const marker = document.createElement('div');
-            marker.className = 'marker';
-            marker.style.left = `${x}px`;
-            marker.style.top = `${y}px`;
-            
-            // Allow dropping onto an existing marker
-            marker.addEventListener('dragover', (e) => e.preventDefault());
-            marker.addEventListener('drop', (e) => {
-                e.preventDefault();
-                e.stopPropagation(); // Stop the map from receiving the drop
-                const file = e.dataTransfer.files[0];
-                if(file) processFile(file, x, y, id);
-            });
+        mapContainer.appendChild(marker);
+    }
 
-            // Click to view history
-            marker.addEventListener('click', (e) => {
-                e.stopPropagation();
-                openModal(id);
-            });
+    // --- Modal Viewing ---
+    function openModal(id) {
+        const loc = locations[id];
+        if (!loc) return;
+        loc.photos.sort((a, b) => a.timestamp - b.timestamp);
+        photoList.innerHTML = '';
+        loc.photos.forEach(p => {
+            photoList.innerHTML += `<div class="photo-entry"><strong>Date Taken:</strong> ${p.date}<img src="${p.url}" alt="Damage Photo"></div>`;
+        });
+        modal.style.display = 'flex';
+    }
 
-            mapContainer.appendChild(marker);
-        }
+    function closeModal() { modal.style.display = 'none'; }
 
-        // --- Modal Functions ---
-        function openModal(id) {
-            const loc = locations.find(l => l.id === id);
-            if (!loc) return;
-
-            // Sort photos by date (oldest first) to show worsening over time
-            loc.photos.sort((a, b) => a.timestamp - b.timestamp);
-
-            photoList.innerHTML = '';
-            loc.photos.forEach(p => {
-                const entry = document.createElement('div');
-                entry.className = 'photo-entry';
-                entry.innerHTML = `
-                    <strong>Date Taken:</strong> ${p.date}
-                    <img src="${p.url}" alt="Damage Photo">
-                `;
-                photoList.appendChild(entry);
-            });
-
-            modal.style.display = 'flex';
-        }
-
-        function closeModal() {
-            modal.style.display = 'none';
-        }
-    </script>
+    // Start by loading data
+    window.onload = loadData;
+</script>
 </body>
 </html>
