@@ -588,9 +588,11 @@ window.addEventListener('mouseup', () => {
     lbViewport.classList.remove('grabbing');
 });
 
-// ESC to close
+// ESC — close lightbox first, then modal if lightbox is already shut
 document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && lightbox.style.display !== 'none') closeLightbox();
+    if (e.key !== 'Escape') return;
+    if (lightbox.style.display !== 'none') { closeLightbox(); return; }
+    if (modal.style.display   !== 'none') { closeModal();    return; }
 });
 
 window.onload = loadData;
