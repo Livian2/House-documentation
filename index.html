@@ -41,7 +41,7 @@
         #reset-btn { font-size: 13px !important; width: auto !important; padding: 0 12px; }
         #zoom-level { font-weight: bold; min-width: 50px; text-align: center; font-size: 15px; }
 
-        /* Map container — only clips overflow, does NOT transform */
+        /* Map */
         #map-container {
             position: relative;
             display: inline-block;
@@ -55,8 +55,6 @@
         #map-container.grabbing  { cursor: grabbing; }
         #map-container.dragover  { border-color: #007bff; background-color: #e9f5ff; }
 
-        /* Only the image gets the CSS transform for zoom/pan.
-           Markers stay in normal container space — JS updates their left/top. */
         #floorplan-img {
             display: block;
             max-width: 800px;
@@ -96,14 +94,11 @@
         }
         .legend-item { display: flex; align-items: center; gap: 5px; }
         .legend-dot {
-            width: 14px; height: 14px;
-            border-radius: 50%;
-            border: 2px solid white;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
-            flex-shrink: 0;
+            width: 14px; height: 14px; border-radius: 50%;
+            border: 2px solid white; box-shadow: 0 1px 3px rgba(0,0,0,0.3); flex-shrink: 0;
         }
 
-        /* Modal */
+        /* Photo history modal */
         #modal {
             display: none;
             position: fixed;
@@ -123,7 +118,16 @@
             overflow-y: auto;
         }
         .photo-entry { margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 10px; }
-        .photo-entry img { max-width: 100%; height: auto; display: block; margin-top: 10px; }
+        .photo-entry img {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin-top: 10px;
+            cursor: zoom-in;
+            border-radius: 4px;
+            transition: opacity 0.15s;
+        }
+        .photo-entry img:hover { opacity: 0.88; }
         .close-btn {
             background: #ff4444; color: white; border: none;
             padding: 10px 20px; cursor: pointer; border-radius: 4px;
@@ -135,6 +139,88 @@
         }
         .delete-btn:hover { background: #cc0000; }
         .photo-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
+
+        /* ── Fullscreen lightbox ─────────────────────────────────────────── */
+        #lightbox {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.97);
+            z-index: 300;
+        }
+
+        /* The viewport is the clipping/panning area */
+        #lb-viewport {
+            position: absolute;
+            inset: 0;
+            overflow: hidden;
+            cursor: grab;
+        }
+        #lb-viewport.grabbing { cursor: grabbing; }
+
+        /* The image itself — only this receives the CSS transform */
+        #lb-img {
+            position: absolute;
+            top: 0; left: 0;
+            transform-origin: 0 0;
+            max-width: none;
+            user-select: none;
+            -webkit-user-drag: none;
+            /* no pointer-events needed — viewport handles them */
+        }
+
+        /* Controls bar at top */
+        #lb-bar {
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 56px;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 8px;
+            padding: 0 16px;
+            background: linear-gradient(rgba(0,0,0,0.6), transparent);
+            z-index: 301;
+            pointer-events: none; /* let clicks fall through to viewport */
+        }
+        #lb-bar button {
+            pointer-events: all;
+            background: rgba(255,255,255,0.15);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 6px 12px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        #lb-bar button:hover { background: rgba(255,255,255,0.3); }
+        #lb-close {
+            width: 36px !important;
+            height: 36px;
+            border-radius: 50% !important;
+            padding: 0 !important;
+            font-size: 18px !important;
+        }
+        #lb-zoom-level {
+            color: rgba(255,255,255,0.85);
+            font-size: 13px;
+            font-weight: bold;
+            min-width: 44px;
+            text-align: center;
+            pointer-events: none;
+        }
+
+        /* Hint at bottom */
+        #lb-hint {
+            position: absolute;
+            bottom: 14px; left: 0; right: 0;
+            text-align: center;
+            color: rgba(255,255,255,0.35);
+            font-size: 12px;
+            pointer-events: none;
+            z-index: 301;
+        }
     </style>
 </head>
 <body>
@@ -157,7 +243,6 @@
 </div>
 
 <div id="map-container">
-    <!-- Only this image gets CSS transform. Markers are siblings, positioned by JS. -->
     <img src="floorplan.jpg" alt="Floorplan" id="floorplan-img">
 </div>
 
@@ -169,6 +254,7 @@
     <div class="legend-item"><div class="legend-dot" style="background:#F44336"></div><span>6+</span></div>
 </div>
 
+<!-- Photo history modal -->
 <div id="modal">
     <div id="modal-content">
         <button class="close-btn" onclick="closeModal()">Close</button>
@@ -177,7 +263,26 @@
     </div>
 </div>
 
+<!-- Fullscreen lightbox -->
+<div id="lightbox">
+    <div id="lb-viewport">
+        <img id="lb-img" src="" alt="Fullscreen photo">
+    </div>
+    <div id="lb-bar">
+        <button onclick="lbAdjustZoom(-0.25)">−</button>
+        <span id="lb-zoom-level">100%</span>
+        <button onclick="lbAdjustZoom(+0.25)">+</button>
+        <button onclick="lbResetZoom()">Fit</button>
+        <button id="lb-close" onclick="closeLightbox()">✕</button>
+    </div>
+    <div id="lb-hint">Scroll to zoom &nbsp;·&nbsp; Drag to pan &nbsp;·&nbsp; Double-click to fit &nbsp;·&nbsp; Esc to close</div>
+</div>
+
 <script>
+// ═══════════════════════════════════════════════════════════
+// FLOORPLAN MAP
+// ═══════════════════════════════════════════════════════════
+
 const mapContainer = document.getElementById('map-container');
 const floorplanImg = document.getElementById('floorplan-img');
 const modal        = document.getElementById('modal');
@@ -188,15 +293,12 @@ const WORKER_URL = 'https://foundation-api.olezwarts16.workers.dev';
 let locations = {};
 let zoom = 1, panX = 0, panY = 0;
 
-// ── Transform: only the image moves. Markers are repositioned in JS. ─────────
-
 function applyTransform() {
     floorplanImg.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
     document.getElementById('zoom-level').textContent = Math.round(zoom * 100) + '%';
     repositionAllMarkers();
 }
 
-// Convert stored image-space coords → current container-space pixel position
 function toScreen(x, y) {
     return { sx: x * zoom + panX, sy: y * zoom + panY };
 }
@@ -223,34 +325,25 @@ function adjustZoom(delta, originX, originY) {
 
 function resetView() { zoom = 1; panX = 0; panY = 0; applyTransform(); }
 
-// Scroll to zoom toward cursor
 mapContainer.addEventListener('wheel', (e) => {
     e.preventDefault();
     const r = mapContainer.getBoundingClientRect();
     adjustZoom(e.deltaY > 0 ? -0.15 : 0.15, e.clientX - r.left, e.clientY - r.top);
 }, { passive: false });
 
-// ── Pan ───────────────────────────────────────────────────────────────────────
-
-let isPanning = false, panStartX, panStartY;
-let dragOriginX, dragOriginY, panMoved = false;
+let isPanning = false, panStartX, panStartY, dragOriginX, dragOriginY, panMoved = false;
 
 mapContainer.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return;
-    isPanning   = true;
-    panMoved    = false;
-    dragOriginX = e.clientX;
-    dragOriginY = e.clientY;
-    panStartX   = e.clientX - panX;
-    panStartY   = e.clientY - panY;
+    isPanning = true; panMoved = false;
+    dragOriginX = e.clientX; dragOriginY = e.clientY;
+    panStartX = e.clientX - panX; panStartY = e.clientY - panY;
     mapContainer.classList.add('grabbing');
 });
 
 window.addEventListener('mousemove', (e) => {
     if (!isPanning) return;
-    if (Math.abs(e.clientX - dragOriginX) > 3 || Math.abs(e.clientY - dragOriginY) > 3) {
-        panMoved = true;
-    }
+    if (Math.abs(e.clientX - dragOriginX) > 3 || Math.abs(e.clientY - dragOriginY) > 3) panMoved = true;
     panX = e.clientX - panStartX;
     panY = e.clientY - panStartY;
     applyTransform();
@@ -261,70 +354,56 @@ window.addEventListener('mouseup', () => {
     mapContainer.classList.remove('grabbing');
 });
 
-// ── Dot colour ────────────────────────────────────────────────────────────────
-
+// Dot colour
 function markerColor(n) {
     if (n <= 1) return '#4CAF50';
     if (n <= 3) return '#FFC107';
     if (n <= 5) return '#FF9800';
     return '#F44336';
 }
-
 function refreshMarkerColor(id) {
-    const el  = document.getElementById(`marker-${id}`);
+    const el = document.getElementById(`marker-${id}`);
     const loc = locations[id];
     if (el && loc) el.style.backgroundColor = markerColor(loc.photos.length);
 }
 
-// ── Load data ─────────────────────────────────────────────────────────────────
-
+// Load
 async function loadData() {
     const response = await fetch(`${WORKER_URL}/api/locations`);
     const data = await response.json();
-
     data.forEach(row => {
         if (!locations[row.marker_id]) {
             locations[row.marker_id] = { id: row.marker_id, x: row.x, y: row.y, photos: [] };
             renderMarker(row.marker_id, row.x, row.y);
         }
-        locations[row.marker_id].photos.push({
-            url: row.image_url, date: row.date_taken, timestamp: row.timestamp
-        });
+        locations[row.marker_id].photos.push({ url: row.image_url, date: row.date_taken, timestamp: row.timestamp });
     });
-
     Object.keys(locations).forEach(refreshMarkerColor);
 }
 
-// ── Drag-and-drop ─────────────────────────────────────────────────────────────
-
+// Drag-and-drop onto map
 mapContainer.addEventListener('dragover',  (e) => { e.preventDefault(); mapContainer.classList.add('dragover'); });
 mapContainer.addEventListener('dragleave', ()  => mapContainer.classList.remove('dragover'));
-
 mapContainer.addEventListener('drop', (e) => {
     e.preventDefault();
     mapContainer.classList.remove('dragover');
     const file = e.dataTransfer.files[0];
     if (!file) return;
     const r = mapContainer.getBoundingClientRect();
-    // Convert container coords → image-space coords (undo pan + zoom)
     const x = (e.clientX - r.left - panX) / zoom;
     const y = (e.clientY - r.top  - panY) / zoom;
     processFile(file, x, y, null);
 });
 
-// ── Upload ────────────────────────────────────────────────────────────────────
-
 function processFile(file, x, y, existingMarkerId) {
     EXIF.getData(file, async function () {
         let dateStr = EXIF.getTag(this, 'DateTimeOriginal');
         let formattedDate = 'Date Unknown', timestamp = Date.now();
-
         if (dateStr) {
             const parts = dateStr.split(' '), dp = parts[0].split(':');
             formattedDate = `${dp[2]}-${dp[1]}-${dp[0]} at ${parts[1]}`;
             timestamp = new Date(dateStr.replace(/:/g, '/')).getTime();
         }
-
         const fd = new FormData();
         fd.append('file', file); fd.append('x', x); fd.append('y', y);
         fd.append('date', formattedDate); fd.append('timestamp', timestamp);
@@ -332,7 +411,7 @@ function processFile(file, x, y, existingMarkerId) {
 
         document.body.style.cursor = 'wait';
         try {
-            const res    = await fetch(`${WORKER_URL}/api/upload`, { method: 'POST', body: fd });
+            const res = await fetch(`${WORKER_URL}/api/upload`, { method: 'POST', body: fd });
             const result = await res.json();
             if (result.success) {
                 if (!existingMarkerId) {
@@ -349,22 +428,17 @@ function processFile(file, x, y, existingMarkerId) {
     });
 }
 
-// ── Render marker ─────────────────────────────────────────────────────────────
-
 function renderMarker(id, x, y) {
     const marker = document.createElement('div');
-    marker.id        = `marker-${id}`;
+    marker.id = `marker-${id}`;
     marker.className = 'marker';
-    // Position in screen/container space
     const { sx, sy } = toScreen(x, y);
-    marker.style.left            = sx + 'px';
-    marker.style.top             = sy + 'px';
+    marker.style.left = sx + 'px';
+    marker.style.top  = sy + 'px';
     marker.style.backgroundColor = '#4CAF50';
-
     marker.addEventListener('dragover', (e) => e.preventDefault());
     marker.addEventListener('drop', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+        e.preventDefault(); e.stopPropagation();
         const file = e.dataTransfer.files[0];
         if (file) processFile(file, x, y, id);
     });
@@ -373,12 +447,10 @@ function renderMarker(id, x, y) {
         if (panMoved) return;
         openModal(id);
     });
-
     mapContainer.appendChild(marker);
 }
 
-// ── Modal ─────────────────────────────────────────────────────────────────────
-
+// History modal
 function openModal(id) {
     const loc = locations[id];
     if (!loc) return;
@@ -391,21 +463,20 @@ function openModal(id) {
                     <strong>Date Taken: ${p.date}</strong>
                     <button class="delete-btn" onclick="deletePhoto('${id}', '${p.url}')">🗑️ Delete</button>
                 </div>
-                <img src="${p.url}" alt="Damage Photo">
+                <img src="${p.url}" alt="Damage Photo"
+                     onclick="openLightbox('${p.url}')"
+                     title="Click to view fullscreen">
             </div>`;
     });
     modal.style.display = 'flex';
 }
-
 function closeModal() { modal.style.display = 'none'; }
-
-// ── Delete ────────────────────────────────────────────────────────────────────
 
 async function deletePhoto(markerId, imageUrl) {
     if (!confirm('Are you sure you want to delete this photo? This cannot be undone.')) return;
     document.body.style.cursor = 'wait';
     try {
-        const res    = await fetch(`${WORKER_URL}/api/delete`, {
+        const res = await fetch(`${WORKER_URL}/api/delete`, {
             method: 'DELETE', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ imageUrl })
         });
@@ -425,6 +496,102 @@ async function deletePhoto(markerId, imageUrl) {
     } catch (err) { alert('Delete failed: ' + err); }
     finally { document.body.style.cursor = 'default'; }
 }
+
+// ═══════════════════════════════════════════════════════════
+// FULLSCREEN LIGHTBOX
+// ═══════════════════════════════════════════════════════════
+
+const lightbox   = document.getElementById('lightbox');
+const lbViewport = document.getElementById('lb-viewport');
+const lbImg      = document.getElementById('lb-img');
+
+let lbZoom = 1, lbPanX = 0, lbPanY = 0;
+let lbPanning = false, lbPanStartX, lbPanStartY, lbDragOriginX, lbDragOriginY, lbPanMoved = false;
+
+function applyLbTransform() {
+    lbImg.style.transform = `translate(${lbPanX}px, ${lbPanY}px) scale(${lbZoom})`;
+    document.getElementById('lb-zoom-level').textContent = Math.round(lbZoom * 100) + '%';
+}
+
+// Fit/center the image inside the viewport at the best zoom
+function lbFit() {
+    const vw = lbViewport.clientWidth;
+    const vh = lbViewport.clientHeight;
+    const iw = lbImg.naturalWidth;
+    const ih = lbImg.naturalHeight;
+    lbZoom = Math.min(vw / iw, vh / ih, 1); // never upscale beyond 1× on fit
+    lbPanX = (vw - iw * lbZoom) / 2;
+    lbPanY = (vh - ih * lbZoom) / 2;
+    applyLbTransform();
+}
+
+function lbResetZoom() { lbFit(); }
+
+function lbAdjustZoom(delta, originX, originY) {
+    const old = lbZoom;
+    // relative delta so each step feels consistent at any zoom level
+    lbZoom = Math.min(10, Math.max(0.1, lbZoom * (1 + delta)));
+    if (originX !== undefined) {
+        lbPanX = originX - (originX - lbPanX) * (lbZoom / old);
+        lbPanY = originY - (originY - lbPanY) * (lbZoom / old);
+    }
+    applyLbTransform();
+}
+
+function openLightbox(url) {
+    lbImg.src = '';
+    lightbox.style.display = 'block';
+    document.body.style.overflow = 'hidden';
+
+    lbImg.onload = () => lbFit();
+    lbImg.src = url;
+}
+
+function closeLightbox() {
+    lightbox.style.display = 'none';
+    document.body.style.overflow = '';
+    lbImg.src = '';
+}
+
+// Scroll to zoom
+lbViewport.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const r  = lbViewport.getBoundingClientRect();
+    const ox = e.clientX - r.left;
+    const oy = e.clientY - r.top;
+    lbAdjustZoom(e.deltaY > 0 ? -0.15 : 0.15, ox, oy);
+}, { passive: false });
+
+// Double-click to fit
+lbViewport.addEventListener('dblclick', () => lbFit());
+
+// Drag to pan
+lbViewport.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    lbPanning = true; lbPanMoved = false;
+    lbDragOriginX = e.clientX; lbDragOriginY = e.clientY;
+    lbPanStartX = e.clientX - lbPanX;
+    lbPanStartY = e.clientY - lbPanY;
+    lbViewport.classList.add('grabbing');
+});
+
+window.addEventListener('mousemove', (e) => {
+    if (!lbPanning) return;
+    if (Math.abs(e.clientX - lbDragOriginX) > 3 || Math.abs(e.clientY - lbDragOriginY) > 3) lbPanMoved = true;
+    lbPanX = e.clientX - lbPanStartX;
+    lbPanY = e.clientY - lbPanStartY;
+    applyLbTransform();
+});
+
+window.addEventListener('mouseup', () => {
+    lbPanning = false;
+    lbViewport.classList.remove('grabbing');
+});
+
+// ESC to close
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && lightbox.style.display !== 'none') closeLightbox();
+});
 
 window.onload = loadData;
 </script>
