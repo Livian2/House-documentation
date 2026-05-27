@@ -16,45 +16,114 @@
             align-items: center;
         }
         #instructions {
-            margin-bottom: 20px;
+            margin-bottom: 10px;
             text-align: center;
         }
-        /* The main container for the map */
+
+        /* ── Zoom controls ─────────────────────────────────── */
+        #zoom-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+        #zoom-controls button {
+            background: #007bff;
+            color: white;
+            border: none;
+            width: 34px;
+            height: 34px;
+            cursor: pointer;
+            border-radius: 6px;
+            font-size: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        #zoom-controls button:hover { background: #0056b3; }
+        #reset-btn { font-size: 13px !important; width: auto !important; padding: 0 12px; }
+        #zoom-level {
+            font-weight: bold;
+            min-width: 50px;
+            text-align: center;
+            font-size: 15px;
+        }
+
+        /* ── Map container — clips the zoomed/panned inner layer ── */
         #map-container {
             position: relative;
-            display: inline-block;
+            overflow: hidden;
             border: 2px dashed #ccc;
             background-color: #fff;
             box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            cursor: grab;
+            width: 800px;
+            /* height is set by JS once the image loads */
+            user-select: none;
         }
-        #map-container img.floorplan {
+        #map-container.grabbing  { cursor: grabbing; }
+        #map-container.dragover  { border-color: #007bff; background-color: #e9f5ff; }
+
+        /* ── Inner layer — this is what gets scaled and panned ── */
+        #map-inner {
+            position: absolute;
+            top: 0;
+            left: 0;
+            transform-origin: 0 0;
+            will-change: transform;
+        }
+        #map-inner img.floorplan {
             display: block;
-            max-width: 800px;
+            width: 800px;
             height: auto;
-            pointer-events: none; /* Let drops fall through to container */
+            pointer-events: none;
         }
-        #map-container.dragover {
-            border-color: #007bff;
-            background-color: #e9f5ff;
-        }
-        /* The red dots */
+
+        /* ── Markers ─────────────────────────────────────────── */
         .marker {
             position: absolute;
-            width: 20px;
-            height: 20px;
-            background-color: red;
+            width: 22px;
+            height: 22px;
             border-radius: 50%;
             transform: translate(-50%, -50%);
             cursor: pointer;
             border: 2px solid white;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.4);
             z-index: 10;
+            transition: background-color 0.4s ease, transform 0.15s ease, box-shadow 0.15s ease;
         }
         .marker:hover {
-            background-color: darkred;
-            transform: translate(-50%, -50%) scale(1.2);
+            transform: translate(-50%, -50%) scale(1.35);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
         }
-        /* Modal for viewing photo history */
+
+        /* ── Colour legend ───────────────────────────────────── */
+        #legend {
+            margin-top: 10px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            font-size: 13px;
+            background: white;
+            padding: 8px 16px;
+            border-radius: 6px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .legend-dot {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+            flex-shrink: 0;
+        }
+
+        /* ── Modal ───────────────────────────────────────────── */
         #modal {
             display: none;
             position: fixed;
@@ -63,7 +132,6 @@
             z-index: 100;
             justify-content: center;
             align-items: center;
-            flex-direction: column;
         }
         #modal-content {
             background: white;
@@ -96,36 +164,62 @@
             float: right;
         }
         .delete-btn {
-    background: #ff4444;
-    color: white;
-    border: none;
-    padding: 5px 10px;
-    cursor: pointer;
-    border-radius: 4px;
-    font-size: 14px;
-}
-.delete-btn:hover {
-    background: #cc0000;
-}
-.photo-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 5px;
-}
+            background: #ff4444;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .delete-btn:hover { background: #cc0000; }
+        .photo-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 5px;
+        }
     </style>
 </head>
 <body>
 
     <div id="instructions">
         <h2>Foundation Issue Tracker</h2>
-        <p><strong>To create a new location:</strong> Drag and drop a photo onto the floorplan.<br>
-        <strong>To add to an existing location:</strong> Drag and drop a photo directly onto a red dot.<br>
-        <strong>To view history:</strong> Click on a red dot.</p>
+        <p>
+            <strong>New location:</strong> Drag &amp; drop a photo onto the floorplan. &nbsp;|&nbsp;
+            <strong>Add to existing:</strong> Drop onto a dot. &nbsp;|&nbsp;
+            <strong>View history:</strong> Click a dot.<br>
+            <strong>Zoom:</strong> Scroll wheel or +/− buttons. &nbsp;|&nbsp; <strong>Pan:</strong> Click and drag.
+        </p>
+    </div>
+
+    <div id="zoom-controls">
+        <button onclick="adjustZoom(-0.25)">−</button>
+        <span id="zoom-level">100%</span>
+        <button onclick="adjustZoom(+0.25)">+</button>
+        <button id="reset-btn" onclick="resetView()">Reset</button>
     </div>
 
     <div id="map-container">
-        <img src="floorplan.jpg" alt="Floorplan" class="floorplan">
+        <div id="map-inner">
+            <img src="floorplan.jpg" alt="Floorplan" class="floorplan" id="floorplan-img">
+        </div>
+    </div>
+
+    <div id="legend">
+        <strong>Photos per spot:</strong>
+        <div class="legend-item">
+            <div class="legend-dot" style="background:#4CAF50"></div><span>1 photo</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-dot" style="background:#FFC107"></div><span>2–3 photos</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-dot" style="background:#FF9800"></div><span>4–5 photos</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-dot" style="background:#F44336"></div><span>6+ photos</span>
+        </div>
     </div>
 
     <div id="modal">
@@ -137,36 +231,117 @@
     </div>
 
     <script>
-    const mapContainer = document.getElementById('map-container');
-    const modal = document.getElementById('modal');
-    const photoList = document.getElementById('photo-list');
-    
+    const mapContainer  = document.getElementById('map-container');
+    const mapInner      = document.getElementById('map-inner');
+    const modal         = document.getElementById('modal');
+    const photoList     = document.getElementById('photo-list');
+    const floorplanImg  = document.getElementById('floorplan-img');
+
     // PASTE YOUR CLOUDFLARE WORKER URL HERE
     const WORKER_URL = 'https://foundation-api.olezwarts16.workers.dev';
 
-    let locations = {}; // Stores marker data
+    let locations = {};
 
-    // --- Load Existing Dots on Startup ---
+    // ── Zoom & Pan state ────────────────────────────────────────────────────
+    let zoom  = 1;
+    let panX  = 0;
+    let panY  = 0;
+
+    function applyTransform() {
+        mapInner.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+        document.getElementById('zoom-level').textContent = Math.round(zoom * 100) + '%';
+    }
+
+    // adjustZoom can optionally receive a focal point (screen coords) so the
+    // point under the cursor stays fixed while zooming.
+    function adjustZoom(delta, originX, originY) {
+        const oldZoom = zoom;
+        zoom = Math.min(5, Math.max(0.3, zoom + delta));
+        if (originX !== undefined) {
+            panX = originX - (originX - panX) * (zoom / oldZoom);
+            panY = originY - (originY - panY) * (zoom / oldZoom);
+        }
+        applyTransform();
+    }
+
+    function resetView() {
+        zoom = 1; panX = 0; panY = 0;
+        applyTransform();
+    }
+
+    // Scroll-to-zoom, centred on the mouse cursor
+    mapContainer.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const rect = mapContainer.getBoundingClientRect();
+        adjustZoom(e.deltaY > 0 ? -0.15 : 0.15,
+                   e.clientX - rect.left,
+                   e.clientY - rect.top);
+    }, { passive: false });
+
+    // ── Pan (click-drag) ────────────────────────────────────────────────────
+    let isPanning = false, panStartX, panStartY, panMoved = false;
+
+    mapContainer.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        isPanning = true;
+        panMoved  = false;
+        panStartX = e.clientX - panX;
+        panStartY = e.clientY - panY;
+        mapContainer.classList.add('grabbing');
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!isPanning) return;
+        panX = e.clientX - panStartX;
+        panY = e.clientY - panStartY;
+        panMoved = true;
+        applyTransform();
+    });
+
+    window.addEventListener('mouseup', () => {
+        isPanning = false;
+        mapContainer.classList.remove('grabbing');
+    });
+
+    // ── Dot colour based on photo count ────────────────────────────────────
+    function markerColor(count) {
+        if (count <= 1) return '#4CAF50';  // green
+        if (count <= 3) return '#FFC107';  // amber
+        if (count <= 5) return '#FF9800';  // orange
+        return '#F44336';                  // red
+    }
+
+    function refreshMarkerColor(id) {
+        const el  = document.getElementById(`marker-${id}`);
+        const loc = locations[id];
+        if (el && loc) el.style.backgroundColor = markerColor(loc.photos.length);
+    }
+
+    // ── Load existing dots on startup ───────────────────────────────────────
     async function loadData() {
         const response = await fetch(`${WORKER_URL}/api/locations`);
         const data = await response.json();
-        
+
         data.forEach(row => {
             if (!locations[row.marker_id]) {
                 locations[row.marker_id] = { id: row.marker_id, x: row.x, y: row.y, photos: [] };
                 renderMarker(row.marker_id, row.x, row.y);
             }
             locations[row.marker_id].photos.push({
-                url: row.image_url,
-                date: row.date_taken,
+                url:       row.image_url,
+                date:      row.date_taken,
                 timestamp: row.timestamp
             });
         });
+
+        // Apply colours now that all photos are counted
+        Object.keys(locations).forEach(refreshMarkerColor);
     }
 
-    // --- Drag and Drop Handlers ---
-    mapContainer.addEventListener('dragover', (e) => { e.preventDefault(); mapContainer.classList.add('dragover'); });
-    mapContainer.addEventListener('dragleave', () => mapContainer.classList.remove('dragover'));
+    // ── Drag-and-drop handlers ──────────────────────────────────────────────
+    mapContainer.addEventListener('dragover',  (e) => { e.preventDefault(); mapContainer.classList.add('dragover'); });
+    mapContainer.addEventListener('dragleave', ()  => mapContainer.classList.remove('dragover'));
+
     mapContainer.addEventListener('drop', (e) => {
         e.preventDefault();
         mapContainer.classList.remove('dragover');
@@ -174,51 +349,47 @@
         if (!file) return;
 
         const rect = mapContainer.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
+        // Convert screen coords → image coords (undo pan + zoom)
+        const x = (e.clientX - rect.left - panX) / zoom;
+        const y = (e.clientY - rect.top  - panY) / zoom;
         processFile(file, x, y, null);
     });
 
-    // --- Process and Upload the File ---
+    // ── Process and upload file ─────────────────────────────────────────────
     function processFile(file, x, y, existingMarkerId) {
-        EXIF.getData(file, async function() {
-            let dateStr = EXIF.getTag(this, "DateTimeOriginal");
-            let formattedDate = "Date Unknown";
-            let timestamp = Date.now();
+        EXIF.getData(file, async function () {
+            let dateStr       = EXIF.getTag(this, 'DateTimeOriginal');
+            let formattedDate = 'Date Unknown';
+            let timestamp     = Date.now();
 
             if (dateStr) {
-                const parts = dateStr.split(' ');
+                const parts     = dateStr.split(' ');
                 const dateParts = parts[0].split(':');
                 formattedDate = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]} at ${parts[1]}`;
-                timestamp = new Date(dateStr.replace(/:/g, "/")).getTime();
+                timestamp = new Date(dateStr.replace(/:/g, '/')).getTime();
             }
 
-            // Create form data to send to Worker
             const formData = new FormData();
-            formData.append('file', file);
-            formData.append('x', x);
-            formData.append('y', y);
-            formData.append('date', formattedDate);
+            formData.append('file',      file);
+            formData.append('x',         x);
+            formData.append('y',         y);
+            formData.append('date',      formattedDate);
             formData.append('timestamp', timestamp);
             if (existingMarkerId) formData.append('markerId', existingMarkerId);
 
-            // Change cursor to loading so you know it's working
-            document.body.style.cursor = 'wait'; 
-
+            document.body.style.cursor = 'wait';
             try {
                 const response = await fetch(`${WORKER_URL}/api/upload`, { method: 'POST', body: formData });
-                const result = await response.json();
-                
+                const result   = await response.json();
+
                 if (result.success) {
                     if (!existingMarkerId) {
-                        locations[result.markerId] = { id: result.markerId, x: x, y: y, photos: [] };
+                        locations[result.markerId] = { id: result.markerId, x, y, photos: [] };
                         renderMarker(result.markerId, x, y);
                     }
-                    locations[result.markerId || existingMarkerId].photos.push({
-                        url: result.imageUrl,
-                        date: formattedDate,
-                        timestamp: timestamp
-                    });
+                    const targetId = result.markerId || existingMarkerId;
+                    locations[targetId].photos.push({ url: result.imageUrl, date: formattedDate, timestamp });
+                    refreshMarkerColor(targetId);
                     alert('Photo uploaded and saved securely!');
                 }
             } catch (err) {
@@ -229,37 +400,41 @@
         });
     }
 
-    // --- Draw the dot on the screen ---
+    // ── Render a dot on the map ─────────────────────────────────────────────
     function renderMarker(id, x, y) {
         const marker = document.createElement('div');
-        marker.id = `marker-${id}`; // Add this line!
+        marker.id        = `marker-${id}`;
         marker.className = 'marker';
-        marker.style.left = `${x}px`;
-        marker.style.top = `${y}px`;
-        
+        marker.style.left            = `${x}px`;
+        marker.style.top             = `${y}px`;
+        marker.style.backgroundColor = '#4CAF50'; // refreshMarkerColor will update this
+
+        // Accept file drops onto an existing dot
         marker.addEventListener('dragover', (e) => e.preventDefault());
         marker.addEventListener('drop', (e) => {
             e.preventDefault();
             e.stopPropagation();
             const file = e.dataTransfer.files[0];
-            if(file) processFile(file, x, y, id);
+            if (file) processFile(file, x, y, id);
         });
 
+        // Open history modal on click (but not after a pan gesture)
         marker.addEventListener('click', (e) => {
             e.stopPropagation();
+            if (panMoved) return;
             openModal(id);
         });
 
-        mapContainer.appendChild(marker);
+        mapInner.appendChild(marker);
     }
 
-    // --- Modal Viewing ---
+    // ── Modal ───────────────────────────────────────────────────────────────
     function openModal(id) {
         const loc = locations[id];
         if (!loc) return;
         loc.photos.sort((a, b) => a.timestamp - b.timestamp);
         photoList.innerHTML = '';
-        
+
         loc.photos.forEach(p => {
             photoList.innerHTML += `
                 <div class="photo-entry">
@@ -268,43 +443,40 @@
                         <button class="delete-btn" onclick="deletePhoto('${id}', '${p.url}')">🗑️ Delete</button>
                     </div>
                     <img src="${p.url}" alt="Damage Photo">
-                </div>
-            `;
+                </div>`;
         });
         modal.style.display = 'flex';
     }
 
     function closeModal() { modal.style.display = 'none'; }
 
-    // --- Delete Photo Function ---
+    // ── Delete a photo ──────────────────────────────────────────────────────
     async function deletePhoto(markerId, imageUrl) {
-        if (!confirm("Are you sure you want to delete this photo? This cannot be undone.")) return;
-        
+        if (!confirm('Are you sure you want to delete this photo? This cannot be undone.')) return;
+
         document.body.style.cursor = 'wait';
         try {
             const response = await fetch(`${WORKER_URL}/api/delete`, {
-                method: 'DELETE',
+                method:  'DELETE',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ imageUrl: imageUrl })
+                body:    JSON.stringify({ imageUrl })
             });
-            
             const result = await response.json();
+
             if (result.success) {
-                // 1. Remove from local memory
                 const loc = locations[markerId];
                 loc.photos = loc.photos.filter(p => p.url !== imageUrl);
-                
-                // 2. If it was the last photo in that spot, remove the red dot entirely
+
                 if (loc.photos.length === 0) {
                     delete locations[markerId];
                     document.getElementById(`marker-${markerId}`).remove();
                     closeModal();
                 } else {
-                    // 3. Otherwise, just refresh the modal to show remaining photos
+                    refreshMarkerColor(markerId);
                     openModal(markerId);
                 }
             } else {
-                alert("Failed to delete photo from the server.");
+                alert('Failed to delete photo from the server.');
             }
         } catch (err) {
             alert('Delete failed: ' + err);
@@ -312,8 +484,17 @@
             document.body.style.cursor = 'default';
         }
     }
-    // Start by loading data
+
+    // ── Size the container to match the floorplan image ─────────────────────
+    function syncContainerHeight() {
+        if (floorplanImg.offsetHeight) {
+            mapContainer.style.height = floorplanImg.offsetHeight + 'px';
+        }
+    }
+    floorplanImg.addEventListener('load', syncContainerHeight);
+    if (floorplanImg.complete) syncContainerHeight();
+
     window.onload = loadData;
-</script>
+    </script>
 </body>
 </html>
